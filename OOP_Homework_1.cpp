@@ -1,6 +1,7 @@
 // OOPCoin
 //fourth edition
 // no need for size at the beggining of the file of users and blocks ?
+//TODO test sent coins from one user to another
 #include <iostream>
 #include <fstream>
 #include <cstring>
@@ -9,8 +10,11 @@ const unsigned int OOP_COINS_PER_LEV = 420;
 const char* USERS_FILE_NAME = "users.dat";
 const char* TBLOCKS_FILE_NAME = "blocks.dat";
 const char* SYSTEM_USER_NAME = "Sys_User";
+const unsigned int SYSTEM_USER_ID = 0;
 const unsigned int USER_NAME_LEN = 128;
 const double MAX_COINS = 1000000000;
+const double MIN_COINS = 1000000;
+const unsigned int MAX_VALID_TRANSACTIONS = 16;
 
 struct User {
 	unsigned id;
@@ -55,12 +59,15 @@ struct Identifiers
 	
 	void readFileUsers();
 	void readFileTBlocks();
-	void createUser(const char* userName, unsigned int investmentSum);
+	void createUser(const char* userName, double investmentSum);
 	void createTBlock();
+	void makeTransaction(unsigned int sender, unsigned int receiver, double coins);
 	void printUsers() const;
 	void writeUsersToBinaryFile() const;
+	void writeTBlocksToBinaryFile() const;
 	void removeUser(unsigned int idUserToRemove);
 	int getUserIndex(unsigned int idToFind) const;
+	double getUserCoins(unsigned int userId) const;
 };
 	
 unsigned computeHash(const unsigned char* memory, int length) {
@@ -84,15 +91,16 @@ size_t getSize(std::ifstream& file);
 int main()
 {
 	Identifiers identifiersData;
+	identifiersData.readFileTBlocks();
 	identifiersData.readFileUsers();
 	
 	//test
 	for (int i = 0; i < 1; ++i)
 	{
-		identifiersData.createUser("Pesho", 0);
+		identifiersData.createUser("Pesho", 100);
 	}
-	identifiersData.createUser("Ivan", 0);
-	identifiersData.createUser("Asparuh", 0);
+	identifiersData.createUser("Ivan", 1);
+	identifiersData.createUser("Asparuh", 200);
 	identifiersData.printUsers();
 	
 	identifiersData.removeUser(1);
@@ -115,7 +123,7 @@ void Identifiers::readFileUsers()
 	if (!file.is_open())
 	{
 		std::cout << "File cannot be opened!" << std::endl;
-		createUser(SYSTEM_USER_NAME, MAX_COINS);
+		createUser(SYSTEM_USER_NAME, 0);
 		return;
 	}
 
@@ -123,12 +131,12 @@ void Identifiers::readFileUsers()
 	if (fileSize == 0)
 	{
 		std::cout << "File is empty!" << std::endl;
-		createUser(SYSTEM_USER_NAME, MAX_COINS);
+		createUser(SYSTEM_USER_NAME, 0);
 		return;
 	}
 
 	if (getUserIndex(0) == -1)
-		createUser(SYSTEM_USER_NAME, MAX_COINS);
+		createUser(SYSTEM_USER_NAME, 0);
 
 	file.read((char*)&usersCount, sizeof(usersCount));
 	users = new User[usersCount];
@@ -143,7 +151,7 @@ void Identifiers::readFileTBlocks()
 	if (!file.is_open())
 	{
 		std::cout << "File cannot be opened!" << std::endl;
-		//createTBlock();
+		createTBlock();
 		return;
 	}
 
@@ -151,7 +159,7 @@ void Identifiers::readFileTBlocks()
 	if (fileSize == 0)
 	{
 		std::cout << "File is empty!" << std::endl;
-		//createTBlock();
+		createTBlock();
 		return;
 	}
 
@@ -204,6 +212,9 @@ void Identifiers::removeUser(unsigned int idUserToRemove)
 	users = temp;
 	
 	writeUsersToBinaryFile();
+
+	//TODO
+	//send coins to Sys_User
 }
 
 void Identifiers::writeUsersToBinaryFile() const
@@ -220,8 +231,23 @@ void Identifiers::writeUsersToBinaryFile() const
 	
 	file.close();
 }
-	
-void Identifiers::createUser(const char* userName, unsigned int investmentSum)
+
+void Identifiers::writeTBlocksToBinaryFile() const
+{
+	std::ofstream file(TBLOCKS_FILE_NAME, std::ios::binary);
+	if (!file.is_open())
+	{
+		std::cout << "File cannot be opened!" << std::endl;
+		return;
+	}
+
+	file.write((const char*)&tBlocksCount, sizeof(tBlocksCount));
+	file.write((const char*)tBlocks, tBlocksCount * sizeof(*tBlocks));
+
+	file.close();
+}
+
+void Identifiers::createUser(const char* userName, double investmentSum)
 {
 	// user part
 	unsigned int userId = usersCount++;
@@ -242,6 +268,7 @@ void Identifiers::createUser(const char* userName, unsigned int investmentSum)
 	writeUsersToBinaryFile();
 	
 	// transaction part
+	makeTransaction(SYSTEM_USER_ID, userId, investmentSum * OOP_COINS_PER_LEV);
 }
 
 void Identifiers::createTBlock()
@@ -250,19 +277,79 @@ void Identifiers::createTBlock()
 	TransactionBlock* temp = new TransactionBlock[tBlocksCount];
 
 	// for loop until the last one existing
-	for (int i = 0; i < usersCount - 1; ++i)
+	for (int i = 0; i < tBlocksCount - 1; ++i)
 	{
 		temp[i] = tBlocks[i];
 	}
 
 	temp[tBlockId].id = tBlockId;
-	//TODO
-	//temp[tBlockId].prevBlockHash = computeHash();
+	temp[tBlockId].validTransactions = 0;
 
 	if (tBlockId == 0)
+		temp[tBlockId].prevBlockId = tBlockId;
+	else
 	{
-
+		temp[tBlockId].prevBlockId = tBlockId - 1;
+		// what should be the first argument of computeHash?
+		temp[tBlockId].prevBlockHash = computeHash((const unsigned char*)tBlocks[tBlockId - 1].id, tBlocks[tBlockId - 1].id);
 	}
+
+	delete[] tBlocks;
+	tBlocks = temp;
+
+	writeTBlocksToBinaryFile();
+}
+
+double Identifiers::getUserCoins(unsigned int userId) const
+{
+	// validation ?
+	double totalCoins = 0;
+	for (int i = 0; i < tBlocksCount; ++i)
+	{
+		for (int j = 0; i < tBlocks[i].validTransactions; ++j)
+		{
+			//coins received
+			if (userId == tBlocks[i].transactions[j].receiver)
+				totalCoins += tBlocks[i].transactions[j].coins;
+			//coins sent
+			if (userId == tBlocks[i].transactions[j].sender)
+				totalCoins -= tBlocks[i].transactions[j].coins;
+		}
+	}
+
+	return totalCoins;
+}
+
+void Identifiers::makeTransaction(unsigned int senderId, unsigned int receiverId, double coinsToSend)
+{
+	if (senderId != 0)
+	{
+		int senderIndex = getUserIndex(senderId);
+		double senderCoins = getUserCoins(senderId);
+		// thats not the right way to compare doubles
+		if (senderCoins < coinsToSend)
+		{
+			std::cout << "User doesn't have enough money!" << std::endl;
+			return;
+		}
+	}
+
+	// do I need this ?
+	if (tBlocksCount == 0)
+		createTBlock();
+
+	if (tBlocks[tBlocksCount - 1].validTransactions == MAX_VALID_TRANSACTIONS)
+		createTBlock();
+
+	tBlocks[tBlocksCount - 1].transactions[tBlocks[tBlocksCount - 1].validTransactions].sender = senderId;
+	tBlocks[tBlocksCount - 1].transactions[tBlocks[tBlocksCount - 1].validTransactions].receiver = receiverId;
+	tBlocks[tBlocksCount - 1].transactions[tBlocks[tBlocksCount - 1].validTransactions].coins = coinsToSend;
+	// set time with <ctime>
+
+	// make it better
+	std::cout << "Sender sent " << coinsToSend << " coins to receiver succesfully!" << std::endl;
+
+	tBlocks[tBlocksCount - 1].validTransactions++;
 }
 	
 void Identifiers::printUsers() const
